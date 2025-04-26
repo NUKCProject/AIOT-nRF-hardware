@@ -1,1 +1,1 @@
-# AIOT-nRF-hardware
+# aiot-hardware-imu

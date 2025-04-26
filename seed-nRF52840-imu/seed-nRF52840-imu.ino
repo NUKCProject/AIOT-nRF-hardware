@@ -214,22 +214,24 @@ void loop() {
         if (timeSyncCharacteristic.written()) {
           // Get the byte array from the characteristic
           const uint8_t* timeBytes = timeSyncCharacteristic.value();
-          unsigned long clientTimestamp = 0;
+          uint64_t clientTimestamp = 0;
           
           // Convert byte array to unsigned long (assuming little endian format)
-          for (int i = 0; i < 4; i++) {
-            clientTimestamp |= (unsigned long)timeBytes[i] << (i * 8);
+          for (int i = 0; i < 8; i++) {
+              clientTimestamp |= (uint64_t)timeBytes[i] << (i * 8);
           }
           
           unsigned long localTime = millis();
           
           // Calculate offset between device time and client time
-          deviceTimeOffset = clientTimestamp - localTime;
+          deviceTimeOffset = (int64_t)clientTimestamp - (int64_t)localTime;
           timeIsSynced = true;
           lastSyncTime = localTime;
           
           Serial.print("Time synchronized. Offset: ");
-          Serial.print(deviceTimeOffset);
+          Serial.print((int32_t)(deviceTimeOffset >> 32), HEX);
+          Serial.print("-");
+          Serial.print((uint32_t)deviceTimeOffset, HEX);
           Serial.println(" ms");
           
           // Flash LED rapidly twice to indicate successful sync
@@ -261,7 +263,10 @@ void loop() {
           // Also send time sync status
           if (timeIsSynced) {
             Serial.print("Time sync active. Current device time: ");
-            Serial.println(getSyncedTime());
+            uint64_t currentTime = getSyncedTime();
+            Serial.print((uint32_t)(currentTime >> 32), HEX);
+            Serial.print("-");
+            Serial.println((uint32_t)currentTime, HEX);
             Serial.print("Time since last sync: ");
             Serial.print((millis() - lastSyncTime) / 1000);
             Serial.println(" seconds");
