@@ -1,0 +1,1 @@
+# AIOT-nRF-hardware
