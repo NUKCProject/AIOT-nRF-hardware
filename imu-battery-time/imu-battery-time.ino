@@ -35,8 +35,8 @@ int batteryHistoryIndex = 0;
 mic_config_t mic_config{
   .channel_cnt = 1,
   .sampling_rate = 16000,
-  .buf_size = 1600,
-  .debug_pin = LED_BUILTIN  // Toggles each DAC ISR (if DEBUG is set to 1)
+  .buf_size = 320,
+  .debug_pin = LED_BUILTIN
 };
 
 // Mic instance based on architecture
@@ -48,7 +48,7 @@ NRF52840_ADC_Class Mic(&mic_config);
 #endif
 
 // Buffer for microphone recording
-#define SAMPLES 800
+#define SAMPLES 320  // (320 / 16000 = 0.02s)
 int16_t recording_buf[SAMPLES];
 volatile uint8_t recording = 0;
 volatile static bool record_ready = false;
@@ -73,7 +73,6 @@ volatile static bool record_ready = false;
 #define LOOP_TIME_CHAR_UUID "14A168D7-04D1-6C4F-7E53-F2E808B11900"
 #define LOOP_TIME_RESET_CHAR_UUID "14A168D7-04D1-6C4F-7E53-F2E809B11900"
 
-
 // Buffer for collecting multiple IMU readings before sending
 #define BUFFER_SIZE 5     // Store 5 readings (at 20ms interval = 100ms of data)
 #define BLE_DATA_SIZE 38  // Timestamp + Device + IMU + MIC data
@@ -85,16 +84,22 @@ typedef struct {
   float gyroX;
   float gyroY;
   float gyroZ;
-  uint64_t timestamp;  // timestamp
-  uint64_t deviceId;   // device ID
+  uint64_t timestamp;
+  uint64_t deviceId;
+  int32_t micLevel;
+  int32_t micPeak;
 } imu_reading_t;
 
-typedef struct {
-  int32_t level;       // Current
-  int32_t peak;        // Peak
-  uint64_t timestamp;  // timestamp
-  uint16_t deviceId;   // device ID
-} mic_reading_t;
+imu_reading_t imuBuffer[BUFFER_SIZE];
+int bufferIndex = 0;
+bool bufferFull = false;
+
+// 麥克風相關變數
+volatile int32_t currentMicLevel = 0;
+volatile int32_t currentMicPeak = 0;
+
+volatile uint32_t lastPeakTime = 0;  // 記錄最後一次更新峰值的時間
+volatile bool micDataAvailable = false;
 
 // ============== BLE : Version characteristics ==============
 BLEDescriptor versionInfoDesc(DESCRIPTOR_UUID, "Version Info");
@@ -144,12 +149,7 @@ unsigned long lastBleTransmit = 0;
 unsigned long lastSerialTransmit = 0;
 unsigned long lastBatteryRead = 0;
 unsigned long lastBatteryUpdate = 0;
-unsigned long lastSyncTime = 0;
 unsigned long blinkTimer = 0;
-
-// Time sync variables
-int64_t deviceTimeOffset = 0;  // Using 64-bit integer for larger time values
-
 
 // Default timestamp: 2025-04-14 00:00:00 TST in milliseconds since epoch
 uint64_t systemBaseTime = 1744876800000ULL;
@@ -163,22 +163,13 @@ const int bleTransmitInterval = 100;      // 100ms = 10Hz for BLE transmission (
 const int serialTransmitInterval = 500;   // 500ms = 2Hz for Serial output (further reduced)
 const int batteryReadInterval = 1000;     // 1000ms = 5Hz for Serial output (further reduced)
 const int batteryUpdateInterval = 30000;  // 30s battery update rate
-const int micUpdateInterval = 100;        // 100ms = 10Hz update rate for mic data
 const int levelResetInterval = 3000;      // Reset peak level every 3 seconds
-
-imu_reading_t imuBuffer[BUFFER_SIZE];
-mic_reading_t micBuffer[BUFFER_SIZE];
-int sharedBufferIndex = 0;
-bool bufferFull = false;
 
 // State variables to avoid blocking loops
 bool imuInitialized = false;
 bool bleInitialized = false;
 int errorBlinkState = 0;
 unsigned long errorBlinkTimer = 0;
-
-// Timer for microphone data
-unsigned long lastMicUpdate = 0;
 
 // Flag to control microphone streaming
 bool micStreamingEnabled = false;
@@ -202,11 +193,12 @@ int ledState = LOW;
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatInterval = 5000;  // 每5秒閃一次心跳
 
+
 void setup() {
   // Initialize LED
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
-  delay(100);  // Brief flash only
+  delay(100);
   digitalWrite(LED_BUILTIN, LOW);
 
   // Defiend Charge current with 100mA (LOW) [50mA: High , 100mA: Low]
@@ -214,8 +206,8 @@ void setup() {
   digitalWrite(BAT_HIGH_CHARGE, LOW);
 
   // Initialize Serial for debugging - shorter delay
-  Serial.begin(1000000);  // Higher baud rate for faster serial
-  delay(100);             // Reduced delay
+  Serial.begin(1000000);
+  delay(100);
 
   // Get and store unique device ID ONCE
   uint64_t deviceid = getUniqueDeviceID();
@@ -231,6 +223,7 @@ void setup() {
   Serial.println("Optimized data transmission rates");
   Serial.println("Added time synchronization feature");
   Serial.println("Updated with mic.h microphone implementation");
+  Serial.println("Optimized IMU and microphone Data");
   Serial.println("====================================");
 
   // Print default timestamp
@@ -241,7 +234,6 @@ void setup() {
   Serial.println((uint32_t)systemBaseTime, HEX);
 
   // Enable Battery Low Charging Mode
-
 
   // Start IMU initialization - don't block on failure
   Serial.println("Initializing IMU...");
@@ -350,8 +342,10 @@ void setup() {
   Serial.println("IMU reading rate: 50Hz (20ms)");
   Serial.println("BLE transmission rate: 10Hz (100ms)");
   Serial.println("Serial output rate (IMU and Mic): 2Hz (500ms)");
-  Serial.println("Microphone update rate: 10Hz (100ms)");
   Serial.println("====================================");
+
+  // 初始啟動麥克風錄音
+  recording = 1;
 }
 
 void loop() {
@@ -379,7 +373,6 @@ void loop() {
   if (millis() - lastImuMicRead >= readImuMicInterval) {
     lastImuMicRead = millis();
     readImuData();
-    readMicData();
   }
 
   if (millis() - lastBatteryRead >= batteryReadInterval) {
@@ -536,6 +529,12 @@ void loop() {
 
   handleBlink();
   processSerialCommands();
+
+  // 確保麥克風錄音始終運行(若已啟用)
+  if (micStreamingEnabled && !recording && !record_ready) {
+    recording = 1;
+  }
+
   // Calculate and update loop execution time
   loopTime = micros() - loopStartTime;
   if (loopTime > maxLoopTime) {
@@ -638,7 +637,6 @@ void printVersionInfo() {
   Serial.println(version.buildTimestamp);
   Serial.println("==========================\n");
 }
-
 void updateVersionInfo() {
   if (!bleInitialized) return;
 
@@ -682,24 +680,37 @@ void readImuData() {
   if (!imuInitialized) return;
 
   // Read accelerometer data
-  imuBuffer[sharedBufferIndex].accelX = imu.readFloatAccelX();
-  imuBuffer[sharedBufferIndex].accelY = imu.readFloatAccelY();
-  imuBuffer[sharedBufferIndex].accelZ = imu.readFloatAccelZ();
-
+  uint64_t currentTimestamp = getSyncedTime();
+  // Read accelerometer data
+  imuBuffer[bufferIndex].accelX = imu.readFloatAccelX();
+  imuBuffer[bufferIndex].accelY = imu.readFloatAccelY();
+  imuBuffer[bufferIndex].accelZ = imu.readFloatAccelZ();
   // Read gyroscope data
-  imuBuffer[sharedBufferIndex].gyroX = imu.readFloatGyroX();
-  imuBuffer[sharedBufferIndex].gyroY = imu.readFloatGyroY();
-  imuBuffer[sharedBufferIndex].gyroZ = imu.readFloatGyroZ();
-
+  imuBuffer[bufferIndex].gyroX = imu.readFloatGyroX();
+  imuBuffer[bufferIndex].gyroY = imu.readFloatGyroY();
+  imuBuffer[bufferIndex].gyroZ = imu.readFloatGyroZ();
   // Store synced timestamp and device ID
-  imuBuffer[sharedBufferIndex].timestamp = getSyncedTime();
-  imuBuffer[sharedBufferIndex].deviceId = DEVICE_ID;
+  imuBuffer[bufferIndex].timestamp = currentTimestamp;
+  imuBuffer[bufferIndex].deviceId = DEVICE_ID;
 
+  // 讀取當前麥克風數據 - 使用保護區塊避免資料競爭
+  noInterrupts();
+  imuBuffer[bufferIndex].micLevel = currentMicLevel;
+  imuBuffer[bufferIndex].micPeak = currentMicPeak;
+  interrupts();
 
-  // Update buffer index
-  sharedBufferIndex = (sharedBufferIndex + 1) % BUFFER_SIZE;
-  if (sharedBufferIndex == 0) {
-    bufferFull = true;  // We've wrapped around, buffer is full
+  // 定期重置峰值
+  if (millis() - lastLevelReset >= levelResetInterval) {
+    lastLevelReset = millis();
+    noInterrupts();
+    currentMicPeak = 0;
+    interrupts();
+  }
+
+  // 更新緩衝區索引
+  bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+  if (bufferIndex == 0) {
+    bufferFull = true;
   }
 }
 
@@ -746,20 +757,44 @@ uint8_t readBatteryLevel() {
 
   return percent;
 }
-
-// 透過 Serial 命令控制麥克風功能
 void processSerialCommands() {
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
-
-    // Change all string to lower case
     command.toLowerCase();
 
     if (command == "mic on" || command == "micon") {
       // Set Mic On
-      micStreamingEnabled = true;
-      Serial.println("Microphone recording enabled");
+      recording = 1;
+      Serial.println("麥克風錄音已啟用");
+    } else if (command == "mic debug" || command == "micdebug") {
+      // Set Mic Debug
+      Serial.println("===== 麥克風狀態 =====");
+      Serial.print("當前音量: ");
+      Serial.println(currentMicLevel);
+      Serial.print("峰值: ");
+      Serial.println(currentMicPeak);
+      Serial.print("資料可用: ");
+      Serial.println(micDataAvailable ? "是" : "否");
+
+      // 分析緩衝區中的原始資料
+      int nonZeroSamples = 0;
+      int maxValue = 0;
+      int sumValue = 0;
+
+      for (int i = 0; i < 100; i++) {  // 只檢查前100個樣本
+        if (recording_buf[i] != 0) nonZeroSamples++;
+        if (abs(recording_buf[i]) > maxValue) maxValue = abs(recording_buf[i]);
+        sumValue += abs(recording_buf[i]);
+      }
+
+      Serial.print("非零樣本: ");
+      Serial.print(nonZeroSamples);
+      Serial.print("/100, 最大值: ");
+      Serial.print(maxValue);
+      Serial.print(", 平均值: ");
+      Serial.println(sumValue / 100);
+      Serial.println("======================");
     } else if (command == "mic off" || command == "micoff") {
       // Set Mic Off
       micStreamingEnabled = false;
@@ -776,6 +811,7 @@ void processSerialCommands() {
       // Show Available Serial Commands
       Serial.println("Available commands:");
       Serial.println("  mic on - Enable microphone recording");
+      Serial.println("  mic debug - microphone Debugging");
       Serial.println("  mic off - Disable microphone recording");
       Serial.println("  mic status - Display microphone status");
       Serial.println("  loop time - Display current and maximum loop time");
@@ -789,112 +825,106 @@ void processSerialCommands() {
 bool initializeMicrophone() {
   // Set the callback function
   Mic.set_callback(audio_rec_callback);
+
+  // Reset Parameter
+  recording = 0;
+  currentMicLevel = 0;
+  currentMicPeak = 0;
+  micDataAvailable = false;
+
   // Initialize the microphone
   if (!Mic.begin()) {
     Serial.println("Failed to initialize microphone!");
     return false;
   }
 
+  recording = 1;
   Serial.println("Microphone initialized successfully");
   return true;
 }
-
 // Microphone callback function for new mic.h implementation
 static void audio_rec_callback(uint16_t* buf, uint32_t buf_len) {
   static uint32_t idx = 0;
+
+  // 避免大量重複代碼，使用函數
   for (uint32_t i = 0; i < buf_len; i++) {
     recording_buf[idx++] = buf[i];
 
     if (idx >= SAMPLES) {
       idx = 0;
-      recording = 0;
-      record_ready = true;
+
+      // 使用更有效的算法計算音量
+      uint32_t sumLevel = 0;
+      uint16_t maxSample = 0;
+
+      for (int j = 0; j < SAMPLES; j++) {
+        uint16_t sample = abs(recording_buf[j]);
+        sumLevel += sample;
+        if (sample > maxSample) {
+          maxSample = sample;
+        }
+      }
+
+      int32_t newLevel = sumLevel / SAMPLES;
+
+      // 原子操作更新全局變數
+      noInterrupts();
+
+      // 更新當前音量
+      currentMicLevel = newLevel;
+
+      // 只在顯著提高時更新峰值
+      if (maxSample > currentMicPeak) {
+        currentMicPeak = maxSample;
+        lastPeakTime = millis();
+      }
+
+      micDataAvailable = true;
+      interrupts();
+
+      recording = 1;
       break;
     }
   }
 }
 
-void readMicData() {
-  // Skip if no data available
-  if (!record_ready) return;
 
-  // Calculate sound level (simple absolute average of samples)
-  int32_t sumLevel = 0;
-  int16_t maxSample = 0;
-
-  for (int i = 0; i < SAMPLES; i++) {
-    int16_t sample = abs(recording_buf[i]);
-    sumLevel += sample;
-
-    // Track maximum level
-    if (sample > maxSample) {
-      maxSample = sample;
-    }
-  }
-
-  // Calculate average level
-  microphoneLevel = sumLevel / SAMPLES;
-
-  // Update peak if needed
-  if (maxSample > microphonePeak) {
-    microphonePeak = maxSample;
-  }
-
-  // Reset peak periodically
-  if (millis() - lastLevelReset >= levelResetInterval) {
-    lastLevelReset = millis();
-    microphonePeak = 0;
-  }
-}
 
 void transmitCombinedDataOverBLE() {
-  uint8_t dummydata[4] = { 0x00 };
-
   // Skip if no data or BLE not available
-  if (!imuInitialized || !bleInitialized || !BLE.connected()) return;
+  if (!imuInitialized || !BLE.connected()) return;
 
   // For BLE, just send the most recent reading to save bandwidth
-  int latestIndex = (sharedBufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
+  const int latestIndex = (bufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
 
   // Convert to byte array for BLE transmission
-  uint8_t combinedData[BLE_DATA_SIZE];  // 8(timestamp) + 2(device ID) + 24(IMU) + 4(MIC) = 38 bytes total
-
-  // Use pre-stored global DEVICE_ID
-  uint16_t shortID = DEVICE_ID;
+  uint8_t combinedData[BLE_DATA_SIZE];
+  size_t offset = 0;
 
   // Copy timestamp (64-bit) to byte array
   uint64_t timestamp = imuBuffer[latestIndex].timestamp;
-  for (int i = 0; i < 8; i++) {
-    combinedData[i] = (timestamp >> (i * 8)) & 0xFF;
-  }
+  memcpy(combinedData + offset, &timestamp, sizeof(timestamp));
+  offset += sizeof(timestamp);
 
   // Copy device ID (64-bit) to byte array
-  for (int i = 0; i < 2; i++) {
-    combinedData[8 + i] = (shortID >> (i * 8)) & 0xFF;
-  }
+  uint16_t shortID = DEVICE_ID;
+  memcpy(combinedData + offset, &shortID, sizeof(shortID));
+  offset += sizeof(shortID);
 
   // Copy IMU float values to byte array
-  memcpy(&combinedData[10], &imuBuffer[latestIndex].accelX, sizeof(float));
-  memcpy(&combinedData[14], &imuBuffer[latestIndex].accelY, sizeof(float));
-  memcpy(&combinedData[18], &imuBuffer[latestIndex].accelZ, sizeof(float));
-  memcpy(&combinedData[22], &imuBuffer[latestIndex].gyroX, sizeof(float));
-  memcpy(&combinedData[26], &imuBuffer[latestIndex].gyroY, sizeof(float));
-  memcpy(&combinedData[30], &imuBuffer[latestIndex].gyroZ, sizeof(float));
+  memcpy(combinedData + offset, &imuBuffer[latestIndex].accelX, 6 * sizeof(float));
+  offset += 6 * sizeof(float);
 
-  // Copy level data
-  if (record_ready) {
-    // Read the data if not already done
-    readMicData();
-    memcpy(&combinedData[34], &microphoneLevel, sizeof(int16_t));
-    memcpy(&combinedData[36], &microphonePeak, sizeof(int16_t));
-    record_ready = false;
-    recording = 1;
-  } else {
-    memcpy(&combinedData[34], dummydata, sizeof(dummydata));
-  }
+  // Copy Mic data
+  int16_t micLevel = (int16_t)imuBuffer[latestIndex].micLevel;
+  int16_t micPeak = (int16_t)imuBuffer[latestIndex].micPeak;
+  memcpy(combinedData + offset, &micLevel, sizeof(micLevel));
+  offset += sizeof(micLevel);
+  memcpy(combinedData + offset, &micPeak, sizeof(micPeak));
+
 
   // Update BLE characteristic value
-  imuCharacteristic.writeValue(combinedData, sizeof(combinedData));
+  imuCharacteristic.writeValue(combinedData, BLE_DATA_SIZE);
 }
 
 void transmitCombinedDataOverSerial() {
@@ -904,10 +934,10 @@ void transmitCombinedDataOverSerial() {
   // 確保 IMU 已初始化
   if (!imuInitialized) return;
 
-  // 獲取 IMU 資料
-  int latestIndex = (sharedBufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
+  // 獲取最新的資料點索引
+  int latestIndex = (bufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
 
-  // Get format timestamp
+  // 格式化時間戳記
   uint64_t currentTimestamp = imuBuffer[latestIndex].timestamp;
   String formattedTimestamp = formatTimestamp(currentTimestamp);
 
@@ -926,26 +956,10 @@ void transmitCombinedDataOverSerial() {
   Serial.print(imuBuffer[latestIndex].gyroY, 4);
   Serial.print(",");
   Serial.print(imuBuffer[latestIndex].gyroZ, 4);
-
-  // 只有在麥克風數據準備好時才添加麥克風部分
-  if (record_ready) {
-    // 讀取麥克風資料
-    readMicData();
-
-    Serial.print(",MIC,");
-    Serial.print(microphoneLevel);
-    Serial.print(",");
-    Serial.print(microphonePeak);
-
-    // 標記麥克風資料已處理並重新開始錄音
-    record_ready = false;
-    recording = 1;
-  } else {
-    // 如果麥克風數據未準備好，輸出空值
-    Serial.print(",MIC,0,0");
-  }
-
-  Serial.println();
+  Serial.print(",MIC,");
+  Serial.print(imuBuffer[latestIndex].micLevel);
+  Serial.print(",");
+  Serial.println(imuBuffer[latestIndex].micPeak);
 }
 
 void processLoopTimeCommand(String command) {
