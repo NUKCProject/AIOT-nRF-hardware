@@ -15,6 +15,9 @@ import queue
 from collections import deque
 import matplotlib
 import psutil  # Added for CPU load monitoring
+import csv
+import os
+
 matplotlib.use('Agg')  # Non-interactive backend first to avoid thread issues
 
 # Logger configuration
@@ -88,12 +91,73 @@ GYRO_MAX_Y = 2000.0     # Maximum Y value for gyroscope
 MIC_MIN_Y = 0        # Minimum Y value for microphone
 MIC_MAX_Y = 2500       # Maximum Y value for microphone
 
+# Battery tracking
+last_battery_level = None
+last_battery_timestamp = None
+average_drain_rate = None  # % per hour
+
+first_imu_received = False
+
+imu_mic_buffer = []
+loop_buffer = []
+battery_buffer = []
+
+MAX_ROWS_PER_FILE = 1000
+MAX_TIME_INTERVAL = 600  # 秒（10 分鐘）
+
+last_write_time = {
+    'imu_mic': time.time(),
+    'loop': time.time(),
+    'size': time.time(),
+    'battery': time.time()
+}
+
+current_file_index = {'imu_mic': 1, 'loop': 1, 'battery': 1}
+
+output_dir = "output"  # 資料夾
+
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+def get_file_name(data_type, version):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    index = current_file_index[data_type]
+    return os.path.join(output_dir, f"{data_type}_{version}_{timestamp}_{index}.csv")
+
+
+def write_to_csv(data_type, data_row, version):
+    buffer = None
+    if data_type == 'imu_mic':
+        buffer = imu_mic_buffer
+    elif data_type == 'loop':
+        buffer = loop_buffer
+    elif data_type == 'battery':
+        buffer = battery_buffer
+
+    # Add PC current time as the first column
+    row_with_time = [datetime.now().isoformat()] + data_row
+    buffer.append(row_with_time)
+    now = time.time()
+
+    if len(buffer) >= MAX_ROWS_PER_FILE or now - last_write_time[data_type] >= MAX_TIME_INTERVAL:
+        file_name = get_file_name(data_type, version)
+        with open(file_name, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(buffer)
+        buffer.clear()
+        current_file_index[data_type] += 1
+        last_write_time[data_type] = now
+
+
+
 # IMU notification handler
-
-
 def imu_notification_handler(sender, data):
+    global  first_imu_received
     # Ensure data length is sufficient
     if len(data) >= 38:  # Updated to include mic data
+        if not first_imu_received:
+            first_imu_received = True
+            start_visualization()
         try:
             # Parse IMU data
             timestamp_ms = int.from_bytes(data[0:8], byteorder='little')
@@ -154,7 +218,7 @@ def imu_notification_handler(sender, data):
                         data_update_queue.put_nowait(data_update)
                     except:
                         pass
-
+            logging.info("IMU data enqueued for visualization.")
         except Exception as e:
             logging.error(f"Error parsing IMU data: {e}")
 
@@ -162,17 +226,31 @@ def imu_notification_handler(sender, data):
 
 
 def battery_notification_handler(sender, data):
+    global last_battery_level, last_battery_timestamp
     if len(data) >= 1:
         try:
             battery_level = data[0]
+            now = time.time()
             logging.info(f"Battery Level: {battery_level}%")
 
-            # Add to visualization data if active
+            # 計算消耗速度 (%/hr)，只用最近一次差值
+            drain_rate = None
+            if last_battery_level is not None and last_battery_timestamp is not None:
+                delta_level = last_battery_level - battery_level
+                delta_time = (now - last_battery_timestamp) / 3600  # 小時
+                if delta_time > 0 and delta_level >= 0:
+                    drain_rate = delta_level / delta_time
+
+            last_battery_level = battery_level
+            last_battery_timestamp = now
+
+            # 加入視覺化更新
             if visualization_active:
                 try:
                     data_update_queue.put_nowait({
                         'battery_level': battery_level,
-                        'battery_timestamp': time.time()
+                        'battery_timestamp': now,
+                        'battery_drain_rate': drain_rate
                     })
                 except queue.Full:
                     pass
@@ -180,17 +258,17 @@ def battery_notification_handler(sender, data):
         except Exception as e:
             logging.error(f"Error parsing battery data: {e}")
 
+
 # Battery charging status notification handler
 
 
 def battery_charging_notification_handler(sender, data):
+    global visualization_active
     if len(data) >= 1:
         try:
             charging_status = bool(data[0])
-            logging.info(
-                f"Battery Charging Status: {'Charging' if charging_status else 'Not Charging'}")
+            logging.info(f"Battery Charging Status: {'Charging' if charging_status else 'Not Charging'}")
 
-            # Add to visualization data if active
             if visualization_active:
                 try:
                     data_update_queue.put_nowait({
@@ -200,8 +278,14 @@ def battery_charging_notification_handler(sender, data):
                 except queue.Full:
                     pass
 
+            if charging_status:
+                logging.info("Device is charging. Visualization remains active.")
+            else:
+                logging.info("Device unplugged. Visualization remains active.")
+
         except Exception as e:
             logging.error(f"Error parsing battery charging status: {e}")
+
 
 # Loop time notification handler
 
@@ -277,7 +361,7 @@ async def read_version_info(client):
         version_data = await client.read_gatt_char(VERSION_INFO_CHAR_UUID)
         version_str = version_data.decode('utf-8').strip('\x00')
         logging.info(f"Device Version: {version_str}")
-        device_version = version_str  # Store version for display
+        device_version = f"{version_str}_{client_obj.address.replace(':', '')[-4:].upper()}"
 
         # Add to visualization data if active
         if visualization_active:
@@ -387,6 +471,10 @@ def visualization_thread_function():
         battery_label = tk.Label(battery_frame, textvariable=battery_var, font=(
             "Arial", 14, "bold"), bg="#f0f0f0")
         battery_label.pack(side=tk.TOP, pady=2)
+
+        remaining_time_var = tk.StringVar(value="Remaining time: calculating...")
+        remaining_time_label = tk.Label(battery_frame, textvariable=remaining_time_var, font=("Arial", 12), bg="#f0f0f0")
+        remaining_time_label.pack(side=tk.TOP, pady=2)
 
         # Battery visual indicator (progressbar)
         battery_indicator = ttk.Progressbar(
@@ -508,6 +596,19 @@ def visualization_thread_function():
                             mic_levels.append(data['mic_level'])
                             mic_peaks.append(data['mic_peak'])
 
+                            imu_mic_row = [
+                                data['timestamp'],
+                                data['accel_x'],
+                                data['accel_y'],
+                                data['accel_z'],
+                                data['gyro_x'],
+                                data['gyro_y'],
+                                data['gyro_z'],
+                                data['mic_level'],
+                                data['mic_peak']
+                            ]
+                            write_to_csv('imu_mic', imu_mic_row, device_version)
+
                             # Update device info if this is the first data point
                             if 'device_id' in data:
                                 device_id = hex(int(data.get('device_id', 0)))[
@@ -525,6 +626,19 @@ def visualization_thread_function():
                             battery_var.set(f"Battery: {battery_level}%")
                             battery_indicator["value"] = battery_level
 
+                            # Update CVS file 
+                            battery_row = [data['battery_timestamp'], data['battery_level']]
+                            write_to_csv('battery', battery_row, device_version)
+
+                        if 'battery_drain_rate' in data:
+                            drain_rate = data['battery_drain_rate']
+                            if drain_rate and drain_rate > 0:
+                                hours_left = battery_levels[-1] / drain_rate
+                                remaining_time_str = f"~{hours_left:.1f} hours remaining"
+                            else:
+                                remaining_time_str = "Remaining time: calculating..."
+                            battery_var.set(f"Battery: {battery_levels[-1]}%  {remaining_time_str}")
+
                         # Add charging status if available
                         if 'charging_status' in data:
                             charging_status = data['charging_status']
@@ -536,8 +650,10 @@ def visualization_thread_function():
                             loop_time = data['loop_time']
                             loop_times.append(loop_time)
                             loop_timestamps.append(data['loop_timestamp'])
-                            loop_time_var.set(
-                                f"Max Loop Time: {loop_time:.2f} ms")
+                            loop_time_var.set(f"Max Loop Time: {loop_time:.2f} ms")
+
+                            loop_row = [data['loop_timestamp'], data['loop_time']]
+                            write_to_csv('loop', loop_row, device_version)
 
                         # Update version info if available
                         if 'version_info' in data:
@@ -806,6 +922,10 @@ async def process_commands():
                 status_str = f"Connected: {client_connected}, Microphone: {'enabled' if mic_enabled else 'disabled'}, Visualization: {'active' if visualization_active else 'inactive'}"
                 print(status_str)
 
+            elif command == "save_csv":
+                force_save_all_buffers(device_version)
+                print("All buffers saved to CSV.")
+
             # Mark task as done
             command_queue.task_done()
 
@@ -814,9 +934,24 @@ async def process_commands():
             # Avoid busy loop in case of repeated errors
             await asyncio.sleep(0.1)
 
+def force_save_all_buffers(version):
+    for data_type, buffer in [
+        ('imu_mic', imu_mic_buffer),
+        ('loop', loop_buffer),
+        ('battery', battery_buffer)
+    ]:
+        if buffer:
+            file_name = get_file_name(data_type, version)
+            with open(file_name, mode='w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerows(buffer)
+            buffer.clear()
+            current_file_index[data_type] += 1
+            last_write_time[data_type] = time.time()
+            print(f"{data_type} buffer saved to {file_name}")
+
+
 # Fixed input listener thread function
-
-
 def input_listener():
     global event_loop
 
@@ -825,6 +960,7 @@ def input_listener():
     print("  r - Reset loop time counter")
     print("  t - Synchronize time")
     print("  v - Read device version")
+    print("  v - w - Force save CSV")    
     print("  g - Start data visualization (graphs)")
     print("  p - Stop data visualization")
     print("  s - Show status")
@@ -856,6 +992,12 @@ def input_listener():
             elif cmd == 'v':  # Version reading command
                 future = asyncio.run_coroutine_threadsafe(
                     command_queue.put("read_version"), event_loop)
+                future.result()
+
+            elif cmd == 'w':
+                print("Forcing data save to CSV...")
+                future = asyncio.run_coroutine_threadsafe(
+                    command_queue.put("save_csv"), event_loop)
                 future.result()
 
             elif cmd == 'g':  # Start visualization
@@ -1075,6 +1217,16 @@ async def scan_devices():
 
     return devices
 
+async def scan_and_connect():
+    from bleak import BleakScanner
+    print("Scanning for BLE devices...")
+    devices = await BleakScanner.discover()
+    for device in devices:
+        if device.name and "Badminton Tracker" in device.name:
+            print(f"Auto-connecting to {device.name} ({device.address})")
+            await connect_and_run(device.address)
+            return
+    print("No Badminton Tracker found.")
 
 async def main(mode="auto", device_address=None):
     """
@@ -1128,7 +1280,7 @@ async def main(mode="auto", device_address=None):
 
     elif mode == "scan_and_connect":
         # Scan devices, then automatically select the first one
-        devices = await scan_devices()
+        devices = await scan_and_connect()
         if not devices:
             logging.error(
                 "No devices found. Please check your Bluetooth connection.")
@@ -1168,7 +1320,7 @@ if __name__ == "__main__":
         print("====================================================")
 
         # Auto scan and manual selection
-        asyncio.run(main(mode="auto"))
+        asyncio.run(main(mode="scan_and_connect"))
 
         # Direct connection with specified address
         # asyncio.run(main(mode="direct", device_address="D2:8C:5B:D4:A4:5C"))
