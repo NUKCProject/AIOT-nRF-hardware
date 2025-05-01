@@ -194,10 +194,13 @@ unsigned long loopTime = 0;            // Current loop execution time
 unsigned long maxLoopTime = 0;         // Maximum recorded loop time
 unsigned long lastLoopTimeUpdate = 0;  // For periodic loop time updates
 
-
+// LED control setting
 unsigned long lastToggle = 0;
 int blinkCount = 0;
 int ledState = LOW;
+
+unsigned long lastHeartbeat = 0;
+const unsigned long heartbeatInterval = 5000;  // 每5秒閃一次心跳
 
 void setup() {
   // Initialize LED
@@ -366,6 +369,12 @@ void loop() {
     return;  // Skip the rest of the loop if we're in an error state
   }
 
+  // Board Heartbeat control
+  if (millis() - lastHeartbeat >= heartbeatInterval && blinkCount == 0) {
+    scheduleBlink(1);
+    lastHeartbeat = millis();
+  }
+
   // Always read IMU at the high frequency to capture motion accurately
   if (millis() - lastImuMicRead >= readImuMicInterval) {
     lastImuMicRead = millis();
@@ -397,8 +406,6 @@ void loop() {
       if (central.connected()) {
         // Check for time sync updates from client
         if (timeSyncCharacteristic.written()) {
-
-
           // 獲取客戶端時間戳
           const uint8_t* timeBytes = timeSyncCharacteristic.value();
           uint64_t clientTimestamp = 0;
@@ -442,7 +449,6 @@ void loop() {
           Serial.println(micStreamingEnabled ? "enabled" : "disabled");
 
           // Visual feedback
-
           scheduleBlink(1);
         }
 
@@ -458,7 +464,6 @@ void loop() {
             Serial.println("Maximum loop time reset via BLE");
 
             // Provide visual feedback
-
             scheduleBlink(1);
           }
         }
@@ -957,10 +962,10 @@ void processLoopTimeCommand(String command) {
 }
 
 void scheduleBlink(int blinks) {
-  digitalWrite(LED_BUILTIN, LOW);
-  blinkCount = blinks * 2;  // 2 次算 1 次閃（HIGH+LOW）
+  blinkCount = blinks * 2;
   lastToggle = millis();
   ledState = LOW;
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void handleBlink() {
@@ -969,6 +974,7 @@ void handleBlink() {
     ledState = !ledState;
     digitalWrite(LED_BUILTIN, ledState);
     blinkCount--;
+  } else if (blinkCount == 0) {
+    digitalWrite(LED_BUILTIN, LOW);
   }
-  if (blinkCount == 0) digitalWrite(LED_BUILTIN, HIGH);
 }
