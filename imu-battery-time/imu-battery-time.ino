@@ -175,8 +175,6 @@ unsigned long errorBlinkTimer = 0;
 bool micStreamingEnabled = false;
 
 // Add these variables for sound level calculation
-int32_t microphoneLevel = 0;
-int32_t microphonePeak = 0;
 unsigned long lastLevelReset = 0;
 
 // Add these global variables after other timer variables (around line 195)
@@ -703,7 +701,11 @@ void readImuData() {
   if (millis() - lastLevelReset >= levelResetInterval) {
     lastLevelReset = millis();
     noInterrupts();
-    currentMicPeak = 0;
+    if (currentMicPeak > 5) {
+      currentMicPeak -= 5;  // 逐漸衰減，而不是一下子重置為0
+    } else {
+      currentMicPeak = 0;
+    }
     interrupts();
   }
 
