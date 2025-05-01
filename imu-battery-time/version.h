@@ -1,5 +1,5 @@
 // version.h - 自動產生的版本資訊
-// 生成時間: 2025-04-29 22:49:56
+// 生成時間: 2025-05-01 11:27:42
 // 請勿手動修改此檔案，它將在建置時自動更新
 #ifndef VERSION_H
 #define VERSION_H
@@ -9,12 +9,12 @@
 #define VERSION_MINOR 0
 #define VERSION_PATCH 0
 #define VERSION_STRING "1.0.0"
-#define VERSION_STRING_FULL "1.0.0-0648837"
+#define VERSION_STRING_FULL "1.0.0-8161e1e"
 
 // Build information
-#define BUILD_TIMESTAMP "2025-04-29 22:49:56"
-#define GIT_TAG "v1.0"
-#define GIT_COMMIT "0648837"
+#define BUILD_TIMESTAMP "2025-05-01 11:27:42"
+#define GIT_TAG "1.0"
+#define GIT_COMMIT "8161e1e"
 #define GIT_AVAILABLE true
 
 // 將版本號添加到BLE廣播數據中的便捷函數

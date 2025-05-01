@@ -154,7 +154,7 @@ int64_t deviceTimeOffset = 0;  // Using 64-bit integer for larger time values
 // Default timestamp: 2025-04-14 00:00:00 TST in milliseconds since epoch
 uint64_t systemBaseTime = 1744876800000ULL;
 // Store millis() at sync time
-unsigned long syncReceivedMillis = 0; 
+unsigned long syncReceivedMillis = 0;
 bool timeIsSynced = false;
 
 // Different intervals for different operations
@@ -195,6 +195,10 @@ unsigned long maxLoopTime = 0;         // Maximum recorded loop time
 unsigned long lastLoopTimeUpdate = 0;  // For periodic loop time updates
 
 
+unsigned long lastToggle = 0;
+int blinkCount = 0;
+int ledState = LOW;
+
 void setup() {
   // Initialize LED
   pinMode(LED_BUILTIN, OUTPUT);
@@ -202,9 +206,13 @@ void setup() {
   delay(100);  // Brief flash only
   digitalWrite(LED_BUILTIN, LOW);
 
+  // Defiend Charge current with 100mA (LOW) [50mA: High , 100mA: Low]
+  battery = Xiao();
+  digitalWrite(BAT_HIGH_CHARGE, LOW);
+
   // Initialize Serial for debugging - shorter delay
-  Serial.begin(500000);  // Higher baud rate for faster serial
-  delay(100);            // Reduced delay
+  Serial.begin(1000000);  // Higher baud rate for faster serial
+  delay(100);             // Reduced delay
 
   // Get and store unique device ID ONCE
   uint64_t deviceid = getUniqueDeviceID();
@@ -389,6 +397,8 @@ void loop() {
       if (central.connected()) {
         // Check for time sync updates from client
         if (timeSyncCharacteristic.written()) {
+
+
           // 獲取客戶端時間戳
           const uint8_t* timeBytes = timeSyncCharacteristic.value();
           uint64_t clientTimestamp = 0;
@@ -414,14 +424,8 @@ void loop() {
           Serial.print("Sync Received at millis(): ");
           Serial.println(syncReceivedMillis);
 
-          // 閃爍 LED 表示同步成功
-          for (int i = 0; i < 2; i++) {
-            digitalWrite(LED_BUILTIN, HIGH);
-            delay(50);
-            digitalWrite(LED_BUILTIN, LOW);
-            delay(50);
-          }
-          digitalWrite(LED_BUILTIN, HIGH);
+          // Provide visual feedback
+          scheduleBlink(2);
         }
 
         // Check if microphone control characteristic was written
@@ -438,9 +442,8 @@ void loop() {
           Serial.println(micStreamingEnabled ? "enabled" : "disabled");
 
           // Visual feedback
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(50);
-          digitalWrite(LED_BUILTIN, HIGH);
+
+          scheduleBlink(1);
         }
 
         // Check if loop time reset characteristic was written
@@ -455,9 +458,8 @@ void loop() {
             Serial.println("Maximum loop time reset via BLE");
 
             // Provide visual feedback
-            digitalWrite(LED_BUILTIN, LOW);
-            delay(50);
-            digitalWrite(LED_BUILTIN, HIGH);
+
+            scheduleBlink(1);
           }
         }
 
@@ -527,6 +529,7 @@ void loop() {
     }
   }
 
+  handleBlink();
   processSerialCommands();
   // Calculate and update loop execution time
   loopTime = micros() - loopStartTime;
@@ -602,7 +605,7 @@ String formatTimestamp(uint64_t timestamp) {
 
 // Get synced timestamp
 uint64_t getSyncedTime() {
-   // Only add the milliseconds that have passed SINCE the sync event
+  // Only add the milliseconds that have passed SINCE the sync event
   return systemBaseTime + ((uint64_t)millis() - syncReceivedMillis);
 }
 
@@ -951,4 +954,21 @@ void processLoopTimeCommand(String command) {
     maxLoopTime = 0;
     Serial.println("Maximum loop time reset to 0");
   }
+}
+
+void scheduleBlink(int blinks) {
+  digitalWrite(LED_BUILTIN, LOW);
+  blinkCount = blinks * 2;  // 2 次算 1 次閃（HIGH+LOW）
+  lastToggle = millis();
+  ledState = LOW;
+}
+
+void handleBlink() {
+  if (blinkCount > 0 && millis() - lastToggle >= 50) {
+    lastToggle = millis();
+    ledState = !ledState;
+    digitalWrite(LED_BUILTIN, ledState);
+    blinkCount--;
+  }
+  if (blinkCount == 0) digitalWrite(LED_BUILTIN, HIGH);
 }

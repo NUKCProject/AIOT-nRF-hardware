@@ -17,7 +17,7 @@ Xiao::Xiao() {
   pinMode(VBAT_ENABLE, OUTPUT);
   pinMode(BAT_CHARGE_STATE, INPUT);
 
-  digitalWrite(BAT_HIGH_CHARGE, HIGH); // charge with 50mA
+  digitalWrite(BAT_HIGH_CHARGE, LOW); // charge with 100mA
 }
 
 #define VBAT_MV_PER_LBS (0.003395996F)
