@@ -159,7 +159,7 @@ bool timeIsSynced = false;
 
 // Different intervals for different operations
 const int readImuMicInterval = 20;        // 20ms = 50Hz for reading IMU and MIC (capture motion accurately)
-const int bleTransmitInterval = 100;      // 100ms = 10Hz for BLE transmission (reduced from 50Hz)
+const int bleTransmitInterval = 20;       // 20ms = 50Hz for  BLE transmission
 const int serialTransmitInterval = 500;   // 500ms = 2Hz for Serial output (further reduced)
 const int batteryReadInterval = 1000;     // 1000ms = 5Hz for Serial output (further reduced)
 const int batteryUpdateInterval = 30000;  // 30s battery update rate
@@ -463,7 +463,6 @@ void loop() {
         if (millis() - lastBleTransmit >= bleTransmitInterval) {
           lastBleTransmit = millis();
           transmitCombinedDataOverBLE();
-          digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));  // Toggle LED on data send
         }
 
         // Update battery data
@@ -702,14 +701,14 @@ void readImuData() {
     lastLevelReset = millis();
     noInterrupts();
     if (currentMicPeak > 5) {
-      currentMicPeak -= 5;  // 逐漸衰減，而不是一下子重置為0
+      currentMicPeak -= 5;  // Reduce steps, not reset to zero immlately
     } else {
       currentMicPeak = 0;
     }
     interrupts();
   }
 
-  // 更新緩衝區索引
+  // Update Buffer Index
   bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
   if (bufferIndex == 0) {
     bufferFull = true;
