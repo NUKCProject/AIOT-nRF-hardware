@@ -74,7 +74,7 @@ volatile static bool record_ready = false;
 #define LOOP_TIME_RESET_CHAR_UUID "14A168D7-04D1-6C4F-7E53-F2E809B11900"
 
 // Buffer for collecting multiple IMU readings before sending
-#define BUFFER_SIZE 5     // Store 5 readings (at 20ms interval = 100ms of data)
+#define BUFFER_SIZE 1     // Store 5 readings (at 20ms interval = 100ms of data)
 #define BLE_DATA_SIZE 38  // Timestamp + Device + IMU + MIC data
 
 typedef struct {
@@ -362,10 +362,10 @@ void loop() {
   }
 
   // Board Heartbeat control
-  if (millis() - lastHeartbeat >= heartbeatInterval && blinkCount == 0) {
-    scheduleBlink(1);
-    lastHeartbeat = millis();
-  }
+  //if (millis() - lastHeartbeat >= heartbeatInterval && blinkCount == 0) {
+  //  scheduleBlink(1);
+  //  lastHeartbeat = millis();
+  //}
 
   // Always read IMU at the high frequency to capture motion accurately
   if (millis() - lastImuMicRead >= readImuMicInterval) {
@@ -373,10 +373,10 @@ void loop() {
     readImuData();
   }
 
-  if (millis() - lastBatteryRead >= batteryReadInterval) {
-    lastBatteryRead = millis();
-    readBatteryLevel();  // Just read and store for average
-  }
+  //if (millis() - lastBatteryRead >= batteryReadInterval) {
+  //  lastBatteryRead = millis();
+    //readBatteryLevel();  // Just read and store for average
+  //}
 
   // BLE functionality - only if BLE is initialized and at a reduced rate
   if (bleInitialized) {
@@ -387,10 +387,9 @@ void loop() {
       static bool previouslyConnected = false;
 
       if (!previouslyConnected) {
-        Serial.print("Connected to central: ");
-        Serial.println(central.address());
         digitalWrite(LED_BUILTIN, HIGH);  // Turn on LED when connected
         previouslyConnected = true;
+        maxLoopTime = 0;
       }
 
       // While the central is still connected
@@ -413,17 +412,9 @@ void loop() {
           setTime(systemBaseTime / 1000);
 
           timeIsSynced = true;
-
-          Serial.println("Time Synchronization Details:");
-          Serial.print("Client Timestamp: ");
-          Serial.println(clientTimestamp);
-          Serial.print("System Base Time: ");
-          Serial.println(systemBaseTime);
-          Serial.print("Sync Received at millis(): ");
-          Serial.println(syncReceivedMillis);
-
           // Provide visual feedback
           scheduleBlink(2);
+          maxLoopTime = 0;
         }
 
         // Check if microphone control characteristic was written
@@ -435,12 +426,8 @@ void loop() {
           if (micStreamingEnabled) {
             recording = 1;
           }
-
-          Serial.print("Microphone streaming ");
-          Serial.println(micStreamingEnabled ? "enabled" : "disabled");
-
           // Visual feedback
-          scheduleBlink(1);
+          //scheduleBlink(1);
         }
 
         // Check if loop time reset characteristic was written
@@ -451,11 +438,8 @@ void loop() {
             maxLoopTime = 0;
             // Reset the characteristic value
             loopTimeResetChar.writeValue(false);
-
-            Serial.println("Maximum loop time reset via BLE");
-
             // Provide visual feedback
-            scheduleBlink(1);
+            //scheduleBlink(1);
           }
         }
 
@@ -466,66 +450,55 @@ void loop() {
         }
 
         // Update battery data
-        if (millis() - lastBatteryUpdate >= batteryUpdateInterval) {
-          lastBatteryUpdate = millis();
-          uint8_t batteryLevel = readBatteryLevel();
-          batteryLevelChar.writeValue(batteryLevel);
-          bool isCharging = battery.IsChargingBattery();
-          batteryChargingChar.writeValue(isCharging);
-        }
+        //if (millis() - lastBatteryUpdate >= batteryUpdateInterval) {
+        //  lastBatteryUpdate = millis();
+        //  uint8_t batteryLevel = readBatteryLevel();
+        //  batteryLevelChar.writeValue(batteryLevel);
+        //  bool isCharging = battery.IsChargingBattery();
+        //  batteryChargingChar.writeValue(isCharging);
+        //}
 
         // Update loop time via BLE periodically (every 1 second)
-        if (bleInitialized && millis() - lastLoopTimeUpdate >= 1000) {
+        if (bleInitialized && millis() - lastLoopTimeUpdate >= 10000) {
           lastLoopTimeUpdate = millis();
 
           // Create a single value that max loop time
           loopTimeChar.writeValue((uint32_t)maxLoopTime);
-
-          // Also send current values via Serial if not connected to BLE
-          if (!BLE.connected()) {
-            Serial.print("Loop time: ");
-            Serial.print(loopTime);
-            Serial.print(" µs, Max: ");
-            Serial.print(maxLoopTime);
-            Serial.println(" µs");
-          }
         }
 
       } else {
         // When the central disconnects
         digitalWrite(LED_BUILTIN, LOW);  // Turn off LED
-        Serial.print("Disconnected from central: ");
-        Serial.println(central.address());
         previouslyConnected = false;
         // When disconnected, disable microphone streaming to save power
         micStreamingEnabled = false;
       }
     } else {
       // If not connected to BLE, output to Serial at a reduced rate
-      if (millis() - lastSerialTransmit >= serialTransmitInterval) {
-        lastSerialTransmit = millis();
-        transmitCombinedDataOverSerial();  // Update IMU and MIC Data
-      }
+      //if (millis() - lastSerialTransmit >= serialTransmitInterval) {
+      //  lastSerialTransmit = millis();
+        //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
+      //}
 
       // If not connected, blink LED slowly
-      if (millis() - blinkTimer >= 2000) {
-        blinkTimer = millis();
-        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-      }
+      //if (millis() - blinkTimer >= 2000) {
+      //  blinkTimer = millis();
+      //  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+      //}
       // When not connected, disable microphone streaming to save power
       micStreamingEnabled = false;
     }
   } else {
 
     // If BLE isn't available, always output to Serial at the reduced rate
-    if (millis() - lastSerialTransmit >= serialTransmitInterval) {
-      lastSerialTransmit = millis();
-      transmitCombinedDataOverSerial();  // Update IMU and MIC Data
-    }
+    //if (millis() - lastSerialTransmit >= serialTransmitInterval) {
+    //  lastSerialTransmit = millis();
+      //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
+    //}
   }
 
-  handleBlink();
-  processSerialCommands();
+  //handleBlink();
+  //processSerialCommands();
 
   // 確保麥克風錄音始終運行(若已啟用)
   if (micStreamingEnabled && !recording && !record_ready) {
@@ -679,21 +652,21 @@ void readImuData() {
   // Read accelerometer data
   uint64_t currentTimestamp = getSyncedTime();
   // Read accelerometer data
-  imuBuffer[bufferIndex].accelX = imu.readFloatAccelX();
-  imuBuffer[bufferIndex].accelY = imu.readFloatAccelY();
-  imuBuffer[bufferIndex].accelZ = imu.readFloatAccelZ();
+  imuBuffer[0].accelX = imu.readFloatAccelX();
+  imuBuffer[0].accelY = imu.readFloatAccelY();
+  imuBuffer[0].accelZ = imu.readFloatAccelZ();
   // Read gyroscope data
-  imuBuffer[bufferIndex].gyroX = imu.readFloatGyroX();
-  imuBuffer[bufferIndex].gyroY = imu.readFloatGyroY();
-  imuBuffer[bufferIndex].gyroZ = imu.readFloatGyroZ();
+  imuBuffer[0].gyroX = imu.readFloatGyroX();
+  imuBuffer[0].gyroY = imu.readFloatGyroY();
+  imuBuffer[0].gyroZ = imu.readFloatGyroZ();
   // Store synced timestamp and device ID
-  imuBuffer[bufferIndex].timestamp = currentTimestamp;
-  imuBuffer[bufferIndex].deviceId = DEVICE_ID;
+  imuBuffer[0].timestamp = currentTimestamp;
+  imuBuffer[0].deviceId = DEVICE_ID;
 
   // 讀取當前麥克風數據 - 使用保護區塊避免資料競爭
   noInterrupts();
-  imuBuffer[bufferIndex].micLevel = currentMicLevel;
-  imuBuffer[bufferIndex].micPeak = currentMicPeak;
+  imuBuffer[0].micLevel = currentMicLevel;
+  imuBuffer[0].micPeak = currentMicPeak;
   interrupts();
 
   // 定期重置峰值
@@ -706,12 +679,6 @@ void readImuData() {
       currentMicPeak = 0;
     }
     interrupts();
-  }
-
-  // Update Buffer Index
-  bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
-  if (bufferIndex == 0) {
-    bufferFull = true;
   }
 }
 
@@ -744,18 +711,6 @@ uint8_t readBatteryLevel() {
   // For LiPo 3.7V: ~3.0V (empty) to ~4.2V (full)
   int percent = map((int)(avgVoltage * 100), 300, 420, 0, 100);
   percent = constrain(percent, 0, 100);
-  if (batteryHistoryIndex == 9) {
-    Serial.print("Battery: Raw Voltage = ");
-    Serial.print(voltage, 3);
-    Serial.print("V, Avg Voltage = ");
-    Serial.print(avgVoltage, 3);
-    Serial.print("V, Charging = ");
-    Serial.print(isCharging ? "Yes" : "No");
-    Serial.print(", Percent = ");
-    Serial.print(percent);
-    Serial.println("%");
-  }
-
   return percent;
 }
 void processSerialCommands() {
@@ -895,15 +850,12 @@ void transmitCombinedDataOverBLE() {
   // Skip if no data or BLE not available
   if (!imuInitialized || !BLE.connected()) return;
 
-  // For BLE, just send the most recent reading to save bandwidth
-  const int latestIndex = (bufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
-
   // Convert to byte array for BLE transmission
   uint8_t combinedData[BLE_DATA_SIZE];
   size_t offset = 0;
 
   // Copy timestamp (64-bit) to byte array
-  uint64_t timestamp = imuBuffer[latestIndex].timestamp;
+  uint64_t timestamp = imuBuffer[0].timestamp;
   memcpy(combinedData + offset, &timestamp, sizeof(timestamp));
   offset += sizeof(timestamp);
 
@@ -913,12 +865,12 @@ void transmitCombinedDataOverBLE() {
   offset += sizeof(shortID);
 
   // Copy IMU float values to byte array
-  memcpy(combinedData + offset, &imuBuffer[latestIndex].accelX, 6 * sizeof(float));
+  memcpy(combinedData + offset, &imuBuffer[0].accelX, 6 * sizeof(float));
   offset += 6 * sizeof(float);
 
   // Copy Mic data
-  int16_t micLevel = (int16_t)imuBuffer[latestIndex].micLevel;
-  int16_t micPeak = (int16_t)imuBuffer[latestIndex].micPeak;
+  int16_t micLevel = (int16_t)imuBuffer[0].micLevel;
+  int16_t micPeak = (int16_t)imuBuffer[0].micPeak;
   memcpy(combinedData + offset, &micLevel, sizeof(micLevel));
   offset += sizeof(micLevel);
   memcpy(combinedData + offset, &micPeak, sizeof(micPeak));
