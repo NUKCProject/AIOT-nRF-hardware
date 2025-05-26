@@ -84,23 +84,17 @@ data_lock = threading.Lock()
 
 # Optimized display ranges based on sample data
 # These values come from analyzing the data patterns
-ACCEL_MIN_Y = -20.0   # Minimum Y value for accelerometer
-ACCEL_MAX_Y = 20.0    # Maximum Y value for accelerometer
+ACCEL_MIN_Y = -15.0   # Minimum Y value for accelerometer
+ACCEL_MAX_Y = 15.0    # Maximum Y value for accelerometer
 GYRO_MIN_Y = -1000.0    # Minimum Y value for gyroscope
 GYRO_MAX_Y = 2000.0     # Maximum Y value for gyroscope
 MIC_MIN_Y = 0        # Minimum Y value for microphone
 MIC_MAX_Y = 2500       # Maximum Y value for microphone
 
-# Battery tracking
-last_battery_level = None
-last_battery_timestamp = None
-average_drain_rate = None  # % per hour
-
 first_imu_received = False
 
 imu_mic_buffer = []
 loop_buffer = []
-battery_buffer = []
 
 MAX_ROWS_PER_FILE = 1000
 MAX_TIME_INTERVAL = 600  # 秒（10 分鐘）
@@ -221,70 +215,6 @@ def imu_notification_handler(sender, data):
             logging.info("IMU data enqueued for visualization.")
         except Exception as e:
             logging.error(f"Error parsing IMU data: {e}")
-
-# Battery notification handler
-
-
-def battery_notification_handler(sender, data):
-    global last_battery_level, last_battery_timestamp
-    if len(data) >= 1:
-        try:
-            battery_level = data[0]
-            now = time.time()
-            logging.info(f"Battery Level: {battery_level}%")
-
-            # 計算消耗速度 (%/hr)，只用最近一次差值
-            drain_rate = None
-            if last_battery_level is not None and last_battery_timestamp is not None:
-                delta_level = last_battery_level - battery_level
-                delta_time = (now - last_battery_timestamp) / 3600  # 小時
-                if delta_time > 0 and delta_level >= 0:
-                    drain_rate = delta_level / delta_time
-
-            last_battery_level = battery_level
-            last_battery_timestamp = now
-
-            # 加入視覺化更新
-            if visualization_active:
-                try:
-                    data_update_queue.put_nowait({
-                        'battery_level': battery_level,
-                        'battery_timestamp': now,
-                        'battery_drain_rate': drain_rate
-                    })
-                except queue.Full:
-                    pass
-
-        except Exception as e:
-            logging.error(f"Error parsing battery data: {e}")
-
-
-# Battery charging status notification handler
-
-
-def battery_charging_notification_handler(sender, data):
-    global visualization_active
-    if len(data) >= 1:
-        try:
-            charging_status = bool(data[0])
-            logging.info(f"Battery Charging Status: {'Charging' if charging_status else 'Not Charging'}")
-
-            if visualization_active:
-                try:
-                    data_update_queue.put_nowait({
-                        'charging_status': charging_status,
-                        'charging_timestamp': time.time()
-                    })
-                except queue.Full:
-                    pass
-
-            if charging_status:
-                logging.info("Device is charging. Visualization remains active.")
-            else:
-                logging.info("Device unplugged. Visualization remains active.")
-
-        except Exception as e:
-            logging.error(f"Error parsing battery charging status: {e}")
 
 
 # Loop time notification handler
@@ -463,30 +393,6 @@ def visualization_thread_function():
             left_info_frame, textvariable=cpu_load_var, font=("Arial", 12), bg="#f0f0f0")
         cpu_load_label.pack(side=tk.TOP, anchor=tk.W, pady=2)
 
-        # Battery level indicator (text + visual)
-        battery_frame = tk.Frame(right_info_frame, bg="#f0f0f0")
-        battery_frame.pack(side=tk.TOP, anchor=tk.E, pady=5)
-
-        battery_var = tk.StringVar(value="Battery: 0%")
-        battery_label = tk.Label(battery_frame, textvariable=battery_var, font=(
-            "Arial", 14, "bold"), bg="#f0f0f0")
-        battery_label.pack(side=tk.TOP, pady=2)
-
-        remaining_time_var = tk.StringVar(value="Remaining time: calculating...")
-        remaining_time_label = tk.Label(battery_frame, textvariable=remaining_time_var, font=("Arial", 12), bg="#f0f0f0")
-        remaining_time_label.pack(side=tk.TOP, pady=2)
-
-        # Battery visual indicator (progressbar)
-        battery_indicator = ttk.Progressbar(
-            battery_frame, orient="horizontal", length=200, mode="determinate")
-        battery_indicator.pack(side=tk.TOP, pady=5)
-
-        # Battery charging indicator
-        charging_var = tk.StringVar(value="Not Charging")
-        charging_label = tk.Label(
-            battery_frame, textvariable=charging_var, font=("Arial", 12), bg="#f0f0f0")
-        charging_label.pack(side=tk.TOP, pady=2)
-
         # Loop time display
         loop_time_var = tk.StringVar(value="Max Loop Time: 0.00 ms")
         loop_time_label = tk.Label(
@@ -575,7 +481,7 @@ def visualization_thread_function():
 
         # Function to update plot data from queue
         def process_data_queue():
-            nonlocal version_var, battery_var, battery_indicator, charging_var
+            nonlocal version_var
             nonlocal device_id_var, connection_var, cpu_load_var, loop_time_var
 
             with data_lock:
@@ -614,36 +520,6 @@ def visualization_thread_function():
                                 device_id = hex(int(data.get('device_id', 0)))[
                                     2:].upper()
                                 device_id_var.set(f"Device ID: {device_id}")
-
-                        # Add battery data if available
-                        if 'battery_level' in data:
-                            battery_level = data['battery_level']
-                            battery_levels.append(battery_level)
-                            battery_timestamps.append(
-                                data['battery_timestamp'])
-
-                            # Update battery UI elements
-                            battery_var.set(f"Battery: {battery_level}%")
-                            battery_indicator["value"] = battery_level
-
-                            # Update CVS file 
-                            battery_row = [data['battery_timestamp'], data['battery_level']]
-                            write_to_csv('battery', battery_row, device_version)
-
-                        if 'battery_drain_rate' in data:
-                            drain_rate = data['battery_drain_rate']
-                            if drain_rate and drain_rate > 0:
-                                hours_left = battery_levels[-1] / drain_rate
-                                remaining_time_str = f"~{hours_left:.1f} hours remaining"
-                            else:
-                                remaining_time_str = "Remaining time: calculating..."
-                            battery_var.set(f"Battery: {battery_levels[-1]}%  {remaining_time_str}")
-
-                        # Add charging status if available
-                        if 'charging_status' in data:
-                            charging_status = data['charging_status']
-                            charging_var.set(
-                                "Charging" if charging_status else "Not Charging")
 
                         # Add loop time if available
                         if 'loop_time' in data:
@@ -1103,17 +979,10 @@ async def connect_and_run(device_address):
 
                 # IMU and battery notifications
                 await client.start_notify(IMU_CHARACTERISTIC_UUID, imu_notification_handler)
-                await client.start_notify(BATTERY_CHAR_UUID, battery_notification_handler)
+                #await client.start_notify(BATTERY_CHAR_UUID, battery_notification_handler)
 
                 # Loop time notifications
                 await client.start_notify(LOOP_TIME_CHAR_UUID, loop_time_notification_handler)
-
-                # Try to subscribe to battery charging status if available
-                try:
-                    await client.start_notify(BATTERY_CHARGING_CHAR_UUID, battery_charging_notification_handler)
-                    print("Battery charging status notifications enabled.")
-                except Exception as e:
-                    print(f"Battery charging notifications not available: {e}")
 
                 print("Started notifications.")
                 print("\nCommands:")
@@ -1306,7 +1175,6 @@ if __name__ == "__main__":
         print("Optimized for badminton motion sensor data")
         print("Enhanced visualization includes:")
         print(" - Software version display")
-        print(" - Battery level monitoring")
         print(" - CPU load and MCU performance tracking")
         print("Commands:")
         print("  m - Toggle microphone on/off")
