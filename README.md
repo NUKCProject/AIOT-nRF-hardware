@@ -4,11 +4,10 @@
 - Serila port Speed : 500kbps
 - UUID : 14A168D7-04D1-6C4F-7E53-F2E800B11900
 - Sytem Read IMU : 20ms
-- System Read Battery ADC : 1000ms
-- BLE IMU Transmit : 100ms
-- BLE Battery Transmit : 30s
-- Serial IMU Transmit : 200ms
-- Serial Battery Transmit : 1s
+- BLE IMU Transmit : 20ms
+- Battery Charging Current : 100uA
+- Time Sync feature
+
 
 # Copy libary to your Arduino libaraies
 ```
@@ -86,5 +85,12 @@ Arduino Configuration
         
         bool Xiao::IsChargingBattery() { return digitalRead(BAT_CHARGE_STATE) == LOW; }
         ```
-        
+
+GitHub 
+
+- https://github.com/Seeed-Studio/Seeed_Arduino_LSM6DS3
+- https://github.com/Seeed-Studio/Seeed_Arduino_Mic
+- https://github.com/arduino-libraries/ArduinoBLE
+- https://github.com/PaulStoffregen/Time
+- https://github.com/honvl/Seeed-Xiao-NRF52840-Battery
  
