@@ -74,7 +74,7 @@ volatile static bool record_ready = false;
 #define LOOP_TIME_RESET_CHAR_UUID "14A168D7-04D1-6C4F-7E53-F2E809B11900"
 
 // Buffer for collecting multiple IMU readings before sending
-#define BUFFER_SIZE 1     // Store 5 readings (at 20ms interval = 100ms of data)
+#define BUFFER_SIZE 1     // Store 1 readings
 #define BLE_DATA_SIZE 38  // Timestamp + Device + IMU + MIC data
 
 typedef struct {
@@ -94,11 +94,11 @@ imu_reading_t imuBuffer[BUFFER_SIZE];
 int bufferIndex = 0;
 bool bufferFull = false;
 
-// 麥克風相關變數
+// Microphone realted variables
 volatile int32_t currentMicLevel = 0;
 volatile int32_t currentMicPeak = 0;
-
-volatile uint32_t lastPeakTime = 0;  // 記錄最後一次更新峰值的時間
+// Last Microphone peak time
+volatile uint32_t lastPeakTime = 0;
 volatile bool micDataAvailable = false;
 
 // ============== BLE : Version characteristics ==============
@@ -121,21 +121,21 @@ BLECharacteristic timeSyncCharacteristic(TIME_SYNC_CHAR_UUID,
                                          BLERead | BLEWrite, 8);  // 8 bytes for 64-bit timestamp
 
 // ============== BLE : Battery Service and characteristics ==============
-BLEDescriptor batteryServiceDesc(DESCRIPTOR_UUID, "Battery Service");
-BLEDescriptor batteryLevelDesc(DESCRIPTOR_UUID, "Battery Level");
-BLEDescriptor batteryChargingDesc(DESCRIPTOR_UUID, "Battery Charging Status");
+//BLEDescriptor batteryServiceDesc(DESCRIPTOR_UUID, "Battery Service");
+//BLEDescriptor batteryLevelDesc(DESCRIPTOR_UUID, "Battery Level");
+//BLEDescriptor batteryChargingDesc(DESCRIPTOR_UUID, "Battery Charging Status");
 
-BLEService batteryService("180F");  // Standard battery service
-BLEUnsignedCharCharacteristic batteryLevelChar(BATTERY_CHAR_UUID, BLERead | BLENotify);
-BLEBoolCharacteristic batteryChargingChar(BATTERY_CHARGING_CHAR_UUID, BLERead | BLENotify);
+//BLEService batteryService("180F");  // Standard battery service
+//BLEUnsignedCharCharacteristic batteryLevelChar(BATTERY_CHAR_UUID, BLERead | BLENotify);
+//BLEBoolCharacteristic batteryChargingChar(BATTERY_CHARGING_CHAR_UUID, BLERead | BLENotify);
 
 // ============== BLE : Microphone Service and characteristics ==============
-BLEDescriptor micServiceDesc(DESCRIPTOR_UUID, "Microphone Service");
-BLEDescriptor micControlDesc(DESCRIPTOR_UUID, "Microphone Control");
+//BLEDescriptor micServiceDesc(DESCRIPTOR_UUID, "Microphone Service");
+//BLEDescriptor micControlDesc(DESCRIPTOR_UUID, "Microphone Control");
 
-BLEService microphoneService(MICROPHONE_SERVICE_UUID);                     // Service for microphone related functions
-BLEByteCharacteristic microphoneControlChar(MICROPHONE_CONTROL_CHAR_UUID,  // Characteristic for control
-                                            BLERead | BLEWrite);
+//BLEService microphoneService(MICROPHONE_SERVICE_UUID);                     // Service for microphone related functions
+//BLEByteCharacteristic microphoneControlChar(MICROPHONE_CONTROL_CHAR_UUID,  // Characteristic for control
+//                                            BLERead | BLEWrite);
 
 // Add these BLE characteristics declarations after other BLE characteristics (around line 170)
 BLEDescriptor loopTimeCharDesc(DESCRIPTOR_UUID, "Loop Time Data");
@@ -158,12 +158,12 @@ unsigned long syncReceivedMillis = 0;
 bool timeIsSynced = false;
 
 // Different intervals for different operations
-const int readImuMicInterval = 20;        // 20ms = 50Hz for reading IMU and MIC (capture motion accurately)
-const int bleTransmitInterval = 20;       // 20ms = 50Hz for  BLE transmission
-const int serialTransmitInterval = 500;   // 500ms = 2Hz for Serial output (further reduced)
-const int batteryReadInterval = 1000;     // 1000ms = 5Hz for Serial output (further reduced)
-const int batteryUpdateInterval = 30000;  // 30s battery update rate
-const int levelResetInterval = 3000;      // Reset peak level every 3 seconds
+const int readImuMicInterval = 20;   // 20ms = 50Hz for reading IMU and MIC (capture motion accurately)
+const int bleTransmitInterval = 20;  // 20ms = 50Hz for  BLE transmission
+//const int serialTransmitInterval = 500;  // 500ms = 2Hz for Serial output (further reduced)
+//const int batteryReadInterval = 1000;     // 1000ms = 5Hz for Serial output (further reduced)
+//const int batteryUpdateInterval = 30000;  // 30s battery update rate
+const int levelResetInterval = 3000;  // Reset peak level every 3 seconds
 
 // State variables to avoid blocking loops
 bool imuInitialized = false;
@@ -304,28 +304,28 @@ void setup() {
 
     // Setup Battery Service
     // Add descriptors to Battery characteristics
-    batteryLevelChar.addDescriptor(batteryLevelDesc);
-    batteryChargingChar.addDescriptor(batteryChargingDesc);
+    //batteryLevelChar.addDescriptor(batteryLevelDesc);
+    //batteryChargingChar.addDescriptor(batteryChargingDesc);
 
-    batteryService.addCharacteristic(batteryLevelChar);
-    batteryService.addCharacteristic(batteryChargingChar);
-    BLE.addService(batteryService);
+    //batteryService.addCharacteristic(batteryLevelChar);
+    //batteryService.addCharacteristic(batteryChargingChar);
+    //BLE.addService(batteryService);
 
     // Initial battery level reading
-    uint8_t batteryLevel = readBatteryLevel();
-    batteryLevelChar.writeValue(batteryLevel);
+    //uint8_t batteryLevel = readBatteryLevel();
+    //batteryLevelChar.writeValue(batteryLevel);
 
     // Initial battery charging status
-    bool isCharging = battery.IsChargingBattery();
-    batteryChargingChar.writeValue(isCharging);
+    //bool isCharging = battery.IsChargingBattery();
+    //batteryChargingChar.writeValue(isCharging);
 
     // Setup Microphone Service
-    microphoneControlChar.addDescriptor(micControlDesc);
-    BLE.setAdvertisedServiceUuid(MICROPHONE_SERVICE_UUID);
-    BLE.addService(microphoneService);
+    //microphoneControlChar.addDescriptor(micControlDesc);
+    //BLE.setAdvertisedServiceUuid(MICROPHONE_SERVICE_UUID);
+    //BLE.addService(microphoneService);
 
     // Set initial values with explanation
-    microphoneControlChar.writeValue(0);  // 0 = disabled by default
+    //microphoneControlChar.writeValue(0);  // 0 = disabled by default
 
     // Start advertising
     BLE.advertise();
@@ -375,7 +375,7 @@ void loop() {
 
   //if (millis() - lastBatteryRead >= batteryReadInterval) {
   //  lastBatteryRead = millis();
-    //readBatteryLevel();  // Just read and store for average
+  //readBatteryLevel();  // Just read and store for average
   //}
 
   // BLE functionality - only if BLE is initialized and at a reduced rate
@@ -396,7 +396,7 @@ void loop() {
       if (central.connected()) {
         // Check for time sync updates from client
         if (timeSyncCharacteristic.written()) {
-          // 獲取客戶端時間戳
+          // Get Time sync Message from BLE
           const uint8_t* timeBytes = timeSyncCharacteristic.value();
           uint64_t clientTimestamp = 0;
 
@@ -418,17 +418,17 @@ void loop() {
         }
 
         // Check if microphone control characteristic was written
-        if (microphoneControlChar.written()) {
-          byte controlValue = microphoneControlChar.value();
-          micStreamingEnabled = (controlValue == 1);
+        //if (microphoneControlChar.written()) {
+        // byte controlValue = microphoneControlChar.value();
+        //micStreamingEnabled = (controlValue == 1);
 
-          // If enabling streaming, reset and start recording
-          if (micStreamingEnabled) {
-            recording = 1;
-          }
-          // Visual feedback
-          //scheduleBlink(1);
-        }
+        // If enabling streaming, reset and start recording
+        //if (micStreamingEnabled) {
+        //recording = 1;
+        //}
+        // Visual feedback
+        //scheduleBlink(1);
+        //}
 
         // Check if loop time reset characteristic was written
         if (loopTimeResetChar.written()) {
@@ -477,7 +477,7 @@ void loop() {
       // If not connected to BLE, output to Serial at a reduced rate
       //if (millis() - lastSerialTransmit >= serialTransmitInterval) {
       //  lastSerialTransmit = millis();
-        //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
+      //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
       //}
 
       // If not connected, blink LED slowly
@@ -493,14 +493,14 @@ void loop() {
     // If BLE isn't available, always output to Serial at the reduced rate
     //if (millis() - lastSerialTransmit >= serialTransmitInterval) {
     //  lastSerialTransmit = millis();
-      //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
+    //transmitCombinedDataOverSerial();  // Update IMU and MIC Data
     //}
   }
 
   //handleBlink();
   //processSerialCommands();
 
-  // 確保麥克風錄音始終運行(若已啟用)
+  // Keep Microphone recording if microphone available
   if (micStreamingEnabled && !recording && !record_ready) {
     recording = 1;
   }
@@ -621,7 +621,7 @@ void updateVersionInfo() {
 
   versionInfoChar.writeValue(versionStr);
 
-  Serial.print("BLE版本信息已更新: ");
+  Serial.print("BLE: Board version updated");
   Serial.println(versionStr);
 }
 
@@ -663,13 +663,13 @@ void readImuData() {
   imuBuffer[0].timestamp = currentTimestamp;
   imuBuffer[0].deviceId = DEVICE_ID;
 
-  // 讀取當前麥克風數據 - 使用保護區塊避免資料競爭
+  // Get microphone data and disable interrupt to avoid incorrect data get
   noInterrupts();
   imuBuffer[0].micLevel = currentMicLevel;
   imuBuffer[0].micPeak = currentMicPeak;
   interrupts();
 
-  // 定期重置峰值
+  // Reset peak value with fix period
   if (millis() - lastLevelReset >= levelResetInterval) {
     lastLevelReset = millis();
     noInterrupts();
@@ -722,33 +722,34 @@ void processSerialCommands() {
     if (command == "mic on" || command == "micon") {
       // Set Mic On
       recording = 1;
-      Serial.println("麥克風錄音已啟用");
+      Serial.println("Microphone Record enabled");
     } else if (command == "mic debug" || command == "micdebug") {
       // Set Mic Debug
-      Serial.println("===== 麥克風狀態 =====");
-      Serial.print("當前音量: ");
+      Serial.println("===== Microphone Status =====");
+      Serial.print("MicLevel: ");
       Serial.println(currentMicLevel);
-      Serial.print("峰值: ");
+      Serial.print("MicPeak: ");
       Serial.println(currentMicPeak);
-      Serial.print("資料可用: ");
-      Serial.println(micDataAvailable ? "是" : "否");
+      Serial.print("MicData: ");
+      Serial.println(micDataAvailable ? "Yes" : "No");
 
-      // 分析緩衝區中的原始資料
+      // An分析緩衝區中的原始資料
       int nonZeroSamples = 0;
       int maxValue = 0;
       int sumValue = 0;
 
-      for (int i = 0; i < 100; i++) {  // 只檢查前100個樣本
+      // Check first 100 samples
+      for (int i = 0; i < 100; i++) {
         if (recording_buf[i] != 0) nonZeroSamples++;
         if (abs(recording_buf[i]) > maxValue) maxValue = abs(recording_buf[i]);
         sumValue += abs(recording_buf[i]);
       }
 
-      Serial.print("非零樣本: ");
+      Serial.print("NonZero Sample: ");
       Serial.print(nonZeroSamples);
-      Serial.print("/100, 最大值: ");
+      Serial.print("/100, Max: ");
       Serial.print(maxValue);
-      Serial.print(", 平均值: ");
+      Serial.print(", Average: ");
       Serial.println(sumValue / 100);
       Serial.println("======================");
     } else if (command == "mic off" || command == "micoff") {
@@ -802,14 +803,12 @@ bool initializeMicrophone() {
 static void audio_rec_callback(uint16_t* buf, uint32_t buf_len) {
   static uint32_t idx = 0;
 
-  // 避免大量重複代碼，使用函數
   for (uint32_t i = 0; i < buf_len; i++) {
     recording_buf[idx++] = buf[i];
 
     if (idx >= SAMPLES) {
       idx = 0;
 
-      // 使用更有效的算法計算音量
       uint32_t sumLevel = 0;
       uint16_t maxSample = 0;
 
@@ -823,13 +822,8 @@ static void audio_rec_callback(uint16_t* buf, uint32_t buf_len) {
 
       int32_t newLevel = sumLevel / SAMPLES;
 
-      // 原子操作更新全局變數
       noInterrupts();
-
-      // 更新當前音量
       currentMicLevel = newLevel;
-
-      // 只在顯著提高時更新峰值
       if (maxSample > currentMicPeak) {
         currentMicPeak = maxSample;
         lastPeakTime = millis();
@@ -881,16 +875,14 @@ void transmitCombinedDataOverBLE() {
 }
 
 void transmitCombinedDataOverSerial() {
-  // 如果藍牙已連接或沒有可用資料，則跳過序列輸出
+  // If BLE connected, disable Serial Port
   if (BLE.connected()) return;
 
-  // 確保 IMU 已初始化
+  // Check IMU initialize
   if (!imuInitialized) return;
 
-  // 獲取最新的資料點索引
   int latestIndex = (bufferIndex - 1 + BUFFER_SIZE) % BUFFER_SIZE;
 
-  // 格式化時間戳記
   uint64_t currentTimestamp = imuBuffer[latestIndex].timestamp;
   String formattedTimestamp = formatTimestamp(currentTimestamp);
 
